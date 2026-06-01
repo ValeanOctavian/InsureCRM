@@ -1,0 +1,673 @@
+-- ============================================================================
+-- Insurance Broker CRM — Initial Schema Migration
+-- ============================================================================
+-- This migration creates all tables, enums, indexes, RLS policies, triggers,
+-- and storage buckets for the CRM MVP.
+-- ============================================================================
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 1. ENUMS (with IF NOT EXISTS so it's safe to run multiple times)
+-- ────────────────────────────────────────────────────────────────────────────
+
+DO $$ BEGIN CREATE TYPE user_role AS ENUM ('admin', 'broker', 'client'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE client_status AS ENUM ('active', 'inactive', 'lead'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE policy_type AS ENUM ('RCA', 'CASCO', 'HOME', 'TRAVEL', 'HEALTH', 'OTHER'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE policy_status AS ENUM ('active', 'expiring_soon', 'expired', 'renewed', 'cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE document_type AS ENUM ('identity_card', 'car_registration', 'car_identity_book', 'address_certificate', 'policy', 'other'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE quality_status AS ENUM ('pending', 'clear', 'blurry', 'rejected'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE ocr_status AS ENUM ('pending', 'processing', 'completed', 'failed'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE task_status AS ENUM ('todo', 'in_progress', 'done', 'cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE task_priority AS ENUM ('low', 'medium', 'high'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE reminder_channel AS ENUM ('email', 'sms', 'whatsapp'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE reminder_status AS ENUM ('pending', 'sent', 'failed'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE renewal_request_status AS ENUM ('requested', 'documents_needed', 'in_progress', 'issued', 'cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE payment_status AS ENUM ('unpaid', 'paid', 'not_required'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 2. TABLES
+-- ────────────────────────────────────────────────────────────────────────────
+
+-- 2a. Profiles (extends auth.users)
+CREATE TABLE IF NOT EXISTS profiles (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid UNIQUE NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  full_name   text NOT NULL,
+  email       text NOT NULL,
+  phone       text,
+  role        user_role NOT NULL DEFAULT 'client',
+  broker_id   uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- 2b. Clients
+CREATE TABLE IF NOT EXISTS clients (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  broker_id   uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  first_name  text NOT NULL,
+  last_name   text NOT NULL,
+  cnp         text, -- Romanian personal numeric code (CNP) / ID document number
+  email       text,
+  phone       text,
+  address     text,
+  city        text,
+  county      text,
+  status      client_status NOT NULL DEFAULT 'active',
+  notes       text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- 2c. Vehicles
+CREATE TABLE IF NOT EXISTS vehicles (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id           uuid NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  broker_id           uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  registration_number text NOT NULL, -- License plate / registration number
+  vin                 text,
+  brand               text NOT NULL,
+  model               text NOT NULL,
+  year                smallint NOT NULL,
+  engine_capacity     smallint, -- cc (cubic centimeters)
+  fuel_type           text, -- petrol, diesel, electric, hybrid, etc.
+  document_number     text, -- Vehicle document / registration certificate number
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now()
+);
+
+-- 2d. Policies
+CREATE TABLE IF NOT EXISTS policies (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id       uuid NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  vehicle_id      uuid REFERENCES vehicles(id) ON DELETE SET NULL,
+  broker_id       uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  type            policy_type NOT NULL DEFAULT 'OTHER',
+  insurer_name    text NOT NULL,
+  policy_number   text NOT NULL,
+  start_date      date NOT NULL,
+  end_date        date NOT NULL,
+  premium_amount  numeric(12,2) NOT NULL,
+  status          policy_status NOT NULL DEFAULT 'active',
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- 2e. Documents
+CREATE TABLE IF NOT EXISTS documents (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id       uuid NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  vehicle_id      uuid REFERENCES vehicles(id) ON DELETE SET NULL,
+  broker_id       uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  type            document_type NOT NULL DEFAULT 'other',
+  file_url        text NOT NULL,
+  quality_status  quality_status NOT NULL DEFAULT 'pending',
+  ocr_status      ocr_status NOT NULL DEFAULT 'pending',
+  extracted_data  jsonb, -- OCR extracted fields (policy number, dates, etc.)
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- 2f. Tasks
+CREATE TABLE IF NOT EXISTS tasks (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  broker_id   uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  client_id   uuid REFERENCES clients(id) ON DELETE SET NULL,
+  policy_id   uuid REFERENCES policies(id) ON DELETE SET NULL,
+  title       text NOT NULL,
+  description text,
+  status      task_status NOT NULL DEFAULT 'todo',
+  priority    task_priority NOT NULL DEFAULT 'medium',
+  due_date    timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- 2g. Reminders
+CREATE TABLE IF NOT EXISTS reminders (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  broker_id     uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  client_id     uuid NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  policy_id     uuid NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
+  channel       reminder_channel NOT NULL DEFAULT 'email',
+  scheduled_for date NOT NULL,
+  sent_at       timestamptz,
+  status        reminder_status NOT NULL DEFAULT 'pending',
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- 2h. Renewal Requests (client-initiated renewal requests)
+CREATE TABLE IF NOT EXISTS renewal_requests (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id       uuid NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  broker_id       uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  policy_id       uuid NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
+  status          renewal_request_status NOT NULL DEFAULT 'requested',
+  payment_status  payment_status NOT NULL DEFAULT 'not_required',
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 3. INDEXES
+-- ────────────────────────────────────────────────────────────────────────────
+
+-- Profiles
+CREATE INDEX idx_profiles_user_id ON profiles(user_id);
+CREATE INDEX idx_profiles_role ON profiles(role);
+CREATE INDEX idx_profiles_broker_id ON profiles(broker_id);
+
+-- Clients
+CREATE INDEX idx_clients_broker_id ON clients(broker_id);
+CREATE INDEX idx_clients_status ON clients(status);
+CREATE INDEX idx_clients_name ON clients(last_name, first_name);
+
+-- Vehicles
+CREATE INDEX idx_vehicles_client_id ON vehicles(client_id);
+CREATE INDEX idx_vehicles_broker_id ON vehicles(broker_id);
+CREATE INDEX idx_vehicles_registration ON vehicles(registration_number);
+
+-- Policies
+CREATE INDEX idx_policies_client_id ON policies(client_id);
+CREATE INDEX idx_policies_broker_id ON policies(broker_id);
+CREATE INDEX idx_policies_status ON policies(status);
+CREATE INDEX idx_policies_end_date ON policies(end_date);
+CREATE INDEX idx_policies_broker_status ON policies(broker_id, status);
+CREATE INDEX idx_policies_expiring ON policies(broker_id, status, end_date)
+  WHERE status IN ('active', 'expiring_soon');
+
+-- Documents
+CREATE INDEX idx_documents_client_id ON documents(client_id);
+CREATE INDEX idx_documents_broker_id ON documents(broker_id);
+CREATE INDEX idx_documents_quality ON documents(quality_status);
+CREATE INDEX idx_documents_ocr ON documents(ocr_status);
+
+-- Tasks
+CREATE INDEX idx_tasks_broker_id ON tasks(broker_id);
+CREATE INDEX idx_tasks_client_id ON tasks(client_id);
+CREATE INDEX idx_tasks_status ON tasks(status);
+CREATE INDEX idx_tasks_due_date ON tasks(due_date)
+  WHERE status IN ('todo', 'in_progress');
+
+-- Reminders
+CREATE INDEX idx_reminders_broker_id ON reminders(broker_id);
+CREATE INDEX idx_reminders_policy_id ON reminders(policy_id);
+CREATE INDEX idx_reminders_scheduled ON reminders(scheduled_for)
+  WHERE status = 'pending';
+CREATE INDEX idx_reminders_status ON reminders(status);
+
+-- Renewal Requests
+CREATE INDEX idx_renewal_requests_broker_id ON renewal_requests(broker_id);
+CREATE INDEX idx_renewal_requests_client_id ON renewal_requests(client_id);
+CREATE INDEX idx_renewal_requests_policy_id ON renewal_requests(policy_id);
+CREATE INDEX idx_renewal_requests_status ON renewal_requests(status);
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 4. TRIGGER: Auto-create profile on user signup
+-- ────────────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = ''
+AS $$
+DECLARE
+  _role user_role;
+BEGIN
+  -- Role from user metadata (set during signup), default to 'client'
+  _role := COALESCE(
+    (NEW.raw_user_meta_data ->> 'role')::user_role,
+    'client'::user_role
+  );
+
+  INSERT INTO public.profiles (user_id, full_name, email, role)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data ->> 'full_name', ''),
+    COALESCE(NEW.email, ''),
+    _role
+  );
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_new_user();
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 5. TRIGGER: Auto-update updated_at timestamp
+-- ────────────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER update_profiles_updated_at
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_clients_updated_at
+  BEFORE UPDATE ON clients
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_vehicles_updated_at
+  BEFORE UPDATE ON vehicles
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_policies_updated_at
+  BEFORE UPDATE ON policies
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_documents_updated_at
+  BEFORE UPDATE ON documents
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_tasks_updated_at
+  BEFORE UPDATE ON tasks
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_reminders_updated_at
+  BEFORE UPDATE ON reminders
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_renewal_requests_updated_at
+  BEFORE UPDATE ON renewal_requests
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_updated_at_column();
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 6. ROW LEVEL SECURITY
+-- ────────────────────────────────────────────────────────────────────────────
+
+-- Enable RLS on all tables
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vehicles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE policies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reminders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE renewal_requests ENABLE ROW LEVEL SECURITY;
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 6a. Profiles RLS
+-- ────────────────────────────────────────────────────────────────────────────
+
+-- Everyone can read their own profile
+CREATE POLICY "Users can read own profile"
+  ON profiles FOR SELECT
+  USING (auth.uid() = user_id);
+
+-- Admins can read all profiles
+CREATE POLICY "Admins can read all profiles"
+  ON profiles FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- Brokers can read their own profile + their clients' profiles
+CREATE POLICY "Brokers can read own and client profiles"
+  ON profiles FOR SELECT
+  USING (
+    auth.uid() = user_id
+    OR (
+      EXISTS (
+        SELECT 1 FROM profiles AS p
+        WHERE p.user_id = auth.uid() AND p.role = 'broker'
+      )
+      AND broker_id IN (
+        SELECT id FROM profiles WHERE user_id = auth.uid()
+      )
+    )
+  );
+
+-- Users can update their own profile
+CREATE POLICY "Users can update own profile"
+  ON profiles FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- Admins can insert/update/delete profiles
+CREATE POLICY "Admins can manage all profiles"
+  ON profiles FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 6b. Clients RLS
+-- ────────────────────────────────────────────────────────────────────────────
+
+-- Brokers can read/write their own clients
+CREATE POLICY "Brokers manage own clients"
+  ON clients FOR ALL
+  USING (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  );
+
+-- Clients can read their own client record
+CREATE POLICY "Clients can read own record"
+  ON clients FOR SELECT
+  USING (
+    id IN (
+      SELECT c.id FROM clients c
+      JOIN profiles p ON p.broker_id = c.broker_id
+      WHERE p.user_id = auth.uid()
+    )
+  );
+
+-- Admins can read all clients
+CREATE POLICY "Admins read all clients"
+  ON clients FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 6c. Vehicles RLS
+-- ────────────────────────────────────────────────────────────────────────────
+
+CREATE POLICY "Brokers manage own vehicles"
+  ON vehicles FOR ALL
+  USING (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Clients read own vehicles"
+  ON vehicles FOR SELECT
+  USING (
+    client_id IN (
+      SELECT c.id FROM clients c
+      JOIN profiles p ON p.user_id = auth.uid() AND p.broker_id = c.broker_id
+    )
+  );
+
+CREATE POLICY "Admins read all vehicles"
+  ON vehicles FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 6d. Policies RLS
+-- ────────────────────────────────────────────────────────────────────────────
+
+CREATE POLICY "Brokers manage own policies"
+  ON policies FOR ALL
+  USING (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Clients read own policies"
+  ON policies FOR SELECT
+  USING (
+    client_id IN (
+      SELECT c.id FROM clients c
+      JOIN profiles p ON p.user_id = auth.uid() AND p.broker_id = c.broker_id
+    )
+  );
+
+CREATE POLICY "Admins read all policies"
+  ON policies FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 6e. Documents RLS
+-- ────────────────────────────────────────────────────────────────────────────
+
+CREATE POLICY "Brokers manage own documents"
+  ON documents FOR ALL
+  USING (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Clients manage own documents"
+  ON documents FOR ALL
+  USING (
+    client_id IN (
+      SELECT c.id FROM clients c
+      JOIN profiles p ON p.user_id = auth.uid() AND p.broker_id = c.broker_id
+    )
+  )
+  WITH CHECK (
+    client_id IN (
+      SELECT c.id FROM clients c
+      JOIN profiles p ON p.user_id = auth.uid() AND p.broker_id = c.broker_id
+    )
+  );
+
+CREATE POLICY "Admins read all documents"
+  ON documents FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 6f. Tasks RLS
+-- ────────────────────────────────────────────────────────────────────────────
+
+CREATE POLICY "Brokers manage own tasks"
+  ON tasks FOR ALL
+  USING (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Clients read tasks related to them"
+  ON tasks FOR SELECT
+  USING (
+    client_id IN (
+      SELECT c.id FROM clients c
+      JOIN profiles p ON p.user_id = auth.uid() AND p.broker_id = c.broker_id
+    )
+  );
+
+CREATE POLICY "Admins read all tasks"
+  ON tasks FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 6g. Reminders RLS
+-- ────────────────────────────────────────────────────────────────────────────
+
+CREATE POLICY "Brokers manage own reminders"
+  ON reminders FOR ALL
+  USING (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Clients read own reminders"
+  ON reminders FOR SELECT
+  USING (
+    client_id IN (
+      SELECT c.id FROM clients c
+      JOIN profiles p ON p.user_id = auth.uid() AND p.broker_id = c.broker_id
+    )
+  );
+
+CREATE POLICY "Admins read all reminders"
+  ON reminders FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 6h. Renewal Requests RLS
+-- ────────────────────────────────────────────────────────────────────────────
+
+CREATE POLICY "Brokers manage renewal requests for own clients"
+  ON renewal_requests FOR ALL
+  USING (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    broker_id IN (
+      SELECT id FROM profiles WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Clients manage own renewal requests"
+  ON renewal_requests FOR ALL
+  USING (
+    client_id IN (
+      SELECT c.id FROM clients c
+      JOIN profiles p ON p.user_id = auth.uid() AND p.broker_id = c.broker_id
+    )
+  )
+  WITH CHECK (
+    client_id IN (
+      SELECT c.id FROM clients c
+      JOIN profiles p ON p.user_id = auth.uid() AND p.broker_id = c.broker_id
+    )
+  );
+
+CREATE POLICY "Admins read all renewal requests"
+  ON renewal_requests FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 7. STORAGE BUCKETS
+-- ────────────────────────────────────────────────────────────────────────────
+
+-- Create storage bucket for client documents
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'client-documents',
+  'client-documents',
+  false, -- private bucket, access via signed URLs
+  10485760, -- 10MB limit
+  ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']::text[]
+)
+ON CONFLICT (id) DO NOTHING;
+
+-- Storage RLS: Brokers can CRUD files in their own folder
+CREATE POLICY "Brokers manage own documents storage"
+  ON storage.objects FOR ALL
+  USING (
+    bucket_id = 'client-documents'
+    AND (storage.foldername(name))[1] = (
+      SELECT id::text FROM profiles WHERE user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    bucket_id = 'client-documents'
+    AND (storage.foldername(name))[1] = (
+      SELECT id::text FROM profiles WHERE user_id = auth.uid()
+    )
+  );
+
+-- Storage RLS: Clients can read documents from their broker's folder
+CREATE POLICY "Clients read documents from broker"
+  ON storage.objects FOR SELECT
+  USING (
+    bucket_id = 'client-documents'
+    AND EXISTS (
+      SELECT 1 FROM profiles p
+      WHERE p.user_id = auth.uid()
+      AND p.broker_id IS NOT NULL
+      AND (storage.foldername(name))[1] = p.broker_id::text
+    )
+  );
+
+-- Storage RLS: Admins read all
+CREATE POLICY "Admins read all documents storage"
+  ON storage.objects FOR SELECT
+  USING (
+    bucket_id = 'client-documents'
+    AND EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );

@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // OpenCV.js is not used at build time; quality checks run client-side
 };
 
 export default nextConfig;
