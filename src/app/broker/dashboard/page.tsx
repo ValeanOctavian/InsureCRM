@@ -22,7 +22,6 @@ import {
 
 export default async function BrokerDashboardPage() {
   const profile = await getCurrentProfile();
-  console.log(profile, 'test 2')
   if (!profile) {
     return (
       <div className="flex items-center justify-center h-full">

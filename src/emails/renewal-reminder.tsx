@@ -22,9 +22,9 @@ interface RenewalReminderEmailProps {
   expirationDate: string;
   daysRemaining: number;
   renewalLink: string;
-  brokerName?: string;
-  brokerEmail?: string;
-  brokerPhone?: string;
+  brokerName?: string | null;
+  brokerEmail?: string | null;
+  brokerPhone?: string | null;
 }
 
 export function renderRenewalReminderEmail(props: RenewalReminderEmailProps): string {

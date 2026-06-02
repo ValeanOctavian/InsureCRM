@@ -1,7 +1,16 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase";
 import { format } from "date-fns";
-import { EmailNotificationProvider } from "@/lib/notifications";
+import {
+  EmailNotificationProvider,
+  SmsNotificationProvider,
+  WhatsAppNotificationProvider,
+} from "@/lib/notifications";
+import type { NotificationProvider } from "@/lib/notifications";
+import type { ReminderChannel } from "@/types";
 import { renderRenewalReminderEmail } from "@/emails/renewal-reminder";
+import { renderRenewalReminderSms } from "@/emails/sms-reminder";
+import { renderRenewalReminderWhatsApp } from "@/emails/whatsapp-reminder";
 
 export type ReminderWindow = 30 | 14 | 7 | 1;
 
@@ -10,19 +19,49 @@ export const REMINDER_WINDOWS: ReminderWindow[] = [30, 14, 7, 1];
 export const DEFAULT_REMINDER_WINDOWS: ReminderWindow[] = [30, 14, 7, 1];
 
 /**
- * Result of running the reminder scheduler.
+ * Channels the scheduler dispatches to. Order matters: the same reminder
+ * record is created once per (policy, channel) pair, and the dedup check
+ * runs per channel.
  */
+export const REMINDER_CHANNELS: ReminderChannel[] = ["email", "sms", "whatsapp"];
+
 export interface SchedulerRunResult {
   totalPoliciesFound: number;
   remindersCreated: number;
   emailsSent: number;
+  smsSent: number;
+  whatsappSent: number;
+  skipped: number;
   errors: string[];
+}
+
+interface PolicyWithJoins {
+  id: string;
+  type: string;
+  policy_number: string;
+  insurer_name: string;
+  end_date: string;
+  broker_id: string;
+  clients: {
+    id: string;
+    first_name: string;
+    last_name: string;
+    email: string | null;
+    phone: string | null;
+  } | null;
+  vehicles: { registration_number: string } | null;
+  profiles: {
+    id: string;
+    full_name: string;
+    email: string;
+    phone: string | null;
+  } | null;
 }
 
 /**
  * Find all active/expiring_soon policies that expire within the given number of days.
  */
-export async function findPoliciesExpiringInDays(days: number) {
+export async function findPoliciesExpiringInDays(days: number): Promise<PolicyWithJoins[]> {
   const supabase = await createClient();
 
   const targetDate = new Date();
@@ -31,26 +70,36 @@ export async function findPoliciesExpiringInDays(days: number) {
 
   const { data: policies } = await supabase
     .from("policies")
-    .select(`
-      *,
+    .select(
+      `
+      id, type, policy_number, insurer_name, end_date, broker_id,
       clients(id, first_name, last_name, email, phone),
-      vehicles(registration_number)
-    `)
+      vehicles(registration_number),
+      profiles!policies_broker_id_fkey ( id, full_name, email, phone )
+    `
+    )
     .in("status", ["active", "expiring_soon"])
     .eq("end_date", targetDateStr)
     .limit(500);
 
-  return policies ?? [];
+  return ((policies ?? []) as unknown as PolicyWithJoins[]).map((p) => ({
+    ...p,
+    clients: Array.isArray(p.clients) ? p.clients[0] ?? null : p.clients,
+    vehicles: Array.isArray(p.vehicles) ? p.vehicles[0] ?? null : p.vehicles,
+    profiles: Array.isArray(p.profiles) ? p.profiles[0] ?? null : p.profiles,
+  }));
 }
 
 /**
  * Check if a reminder was already sent today for this policy+channel combination.
+ * Pass `useAdmin: true` to bypass RLS (e.g. when called from a cron route).
  */
 export async function hasReminderBeenSentToday(
   policyId: string,
-  channel: string
+  channel: string,
+  useAdmin = false
 ): Promise<boolean> {
-  const supabase = await createClient();
+  const supabase = useAdmin ? createAdminClient() : await createClient();
   const todayStart = format(new Date(), "yyyy-MM-dd");
 
   const { data } = await supabase
@@ -66,15 +115,19 @@ export async function hasReminderBeenSentToday(
 
 /**
  * Create a reminder record in the database.
+ * Pass `useAdmin: true` to bypass RLS (e.g. when called from a cron route).
  */
-export async function createReminderRecord(input: {
-  broker_id: string;
-  client_id: string;
-  policy_id: string;
-  channel: string;
-  scheduled_for: string;
-}): Promise<string | null> {
-  const supabase = await createClient();
+export async function createReminderRecord(
+  input: {
+    broker_id: string;
+    client_id: string;
+    policy_id: string;
+    channel: string;
+    scheduled_for: string;
+  },
+  useAdmin = false
+): Promise<string | null> {
+  const supabase = useAdmin ? createAdminClient() : await createClient();
 
   const { data } = await supabase
     .from("reminders")
@@ -94,13 +147,14 @@ export async function createReminderRecord(input: {
 
 /**
  * Update a reminder record's status.
+ * Pass `useAdmin: true` to bypass RLS (e.g. when called from a cron route).
  */
 export async function updateReminderStatus(
   reminderId: string,
   status: "sent" | "failed",
-  errorMessage?: string
+  useAdmin = false
 ): Promise<void> {
-  const supabase = await createClient();
+  const supabase = useAdmin ? createAdminClient() : await createClient();
   await supabase
     .from("reminders")
     .update({
@@ -111,60 +165,111 @@ export async function updateReminderStatus(
 }
 
 /**
- * Send an email reminder for a specific policy.
+ * Build the deep-link to the client portal. No token, no query.
+ * The portal is auth-gated — the user must sign in to see their renewals.
  */
-async function sendEmailReminder(policy: any): Promise<string | null> {
-  const client = policy.clients;
-  const vehicle = policy.vehicles;
-  const broker = policy.profiles;
+function buildPortalLink(): string {
+  return `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/portal`;
+}
 
-  if (!client?.email) {
-    return `Client ${client?.first_name ?? "unknown"} has no email address`;
-  }
+/**
+ * Send a reminder via the specified channel. Returns null on success,
+ * or an error string on failure.
+ *
+ * Skips silently if the client has no contact for that channel.
+ */
+async function sendChannelReminder(
+  policy: PolicyWithJoins,
+  channel: ReminderChannel
+): Promise<string | null> {
+  const client = policy.clients;
+  if (!client) return `Policy ${policy.id}: no client data`;
 
   const expirationDate = new Date(policy.end_date);
-  const daysRemaining = Math.ceil(
-    (expirationDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
+  const daysRemaining = Math.max(
+    0,
+    Math.ceil((expirationDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
   );
 
-  const renewalLink = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/portal/renew?policy=${policy.id}`;
+  const renewalLink = buildPortalLink();
+  const clientName = `${client.first_name} ${client.last_name}`;
+  const broker = policy.profiles;
 
-  const emailHtml = renderRenewalReminderEmail({
-    clientName: `${client.first_name} ${client.last_name}`,
-    policyType: policy.type,
-    policyNumber: policy.policy_number,
-    insurerName: policy.insurer_name,
-    vehicleRegistration: vehicle?.registration_number,
-    expirationDate: policy.end_date,
-    daysRemaining: Math.max(0, daysRemaining),
-    renewalLink,
-    brokerName: broker?.full_name,
-    brokerEmail: broker?.broker_email,
-    brokerPhone: broker?.broker_phone,
-  });
+  let provider: NotificationProvider;
+  let message: { to: string; subject?: string; body: string };
 
-  const provider = new EmailNotificationProvider();
-  const result = await provider.send({
-    to: client.email,
-    subject: `Renewal Reminder: Your ${policy.type} policy expires in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`,
-    body: emailHtml,
-  });
-
-  if (!result.success) {
-    return result.error ?? "Email send failed";
+  switch (channel) {
+    case "email": {
+      if (!client.email) return null; // skip silently — no contact
+      provider = new EmailNotificationProvider();
+      const html = renderRenewalReminderEmail({
+        clientName,
+        policyType: policy.type,
+        policyNumber: policy.policy_number,
+        insurerName: policy.insurer_name,
+        vehicleRegistration: policy.vehicles?.registration_number ?? null,
+        expirationDate: policy.end_date,
+        daysRemaining,
+        renewalLink,
+        brokerName: broker?.full_name,
+        brokerEmail: broker?.email,
+        brokerPhone: broker?.phone,
+      });
+      message = {
+        to: client.email,
+        subject: `Renewal Reminder: Your ${policy.type} policy expires in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`,
+        body: html,
+      };
+      break;
+    }
+    case "sms": {
+      if (!client.phone) return null; // skip silently
+      provider = new SmsNotificationProvider();
+      const body = renderRenewalReminderSms({
+        clientName,
+        policyType: policy.type,
+        policyNumber: policy.policy_number,
+        insurerName: policy.insurer_name,
+        daysRemaining,
+        expirationDate: policy.end_date,
+        renewalLink,
+        brokerName: broker?.full_name,
+      });
+      message = { to: client.phone, body };
+      break;
+    }
+    case "whatsapp": {
+      if (!client.phone) return null;
+      provider = new WhatsAppNotificationProvider();
+      const body = renderRenewalReminderWhatsApp({
+        clientName,
+        policyType: policy.type,
+        policyNumber: policy.policy_number,
+        insurerName: policy.insurer_name,
+        vehicleRegistration: policy.vehicles?.registration_number ?? null,
+        expirationDate: policy.end_date,
+        daysRemaining,
+        renewalLink,
+        brokerName: broker?.full_name,
+        brokerPhone: broker?.phone,
+      });
+      message = { to: client.phone, body };
+      break;
+    }
   }
 
-  return null; // No error = success
+  const result = await provider.send(message);
+  return result.success ? null : result.error ?? `${channel} send failed`;
 }
 
 /**
  * Run the reminder scheduler for a specific time window (e.g., 30 days).
  *
- * 1. Find policies expiring in exactly N days.
- * 2. Skip if reminder was already sent today.
- * 3. Create a reminder record.
- * 4. Send email reminder.
- * 5. Update reminder record status.
+ * For each policy expiring in N days and each channel (email, sms, whatsapp):
+ *   1. Skip if reminder was already sent today for (policy, channel).
+ *   2. Create a reminder record.
+ *   3. Send the reminder via the right provider.
+ *   4. Update the reminder record's status.
  */
 export async function runSchedulerForWindow(
   days: ReminderWindow
@@ -173,6 +278,9 @@ export async function runSchedulerForWindow(
     totalPoliciesFound: 0,
     remindersCreated: 0,
     emailsSent: 0,
+    smsSent: 0,
+    whatsappSent: 0,
+    skipped: 0,
     errors: [],
   };
 
@@ -181,50 +289,49 @@ export async function runSchedulerForWindow(
     result.totalPoliciesFound = policies.length;
 
     for (const policy of policies) {
-      try {
-        const client = policy.clients;
-        const broker = policy.profiles;
+      for (const channel of REMINDER_CHANNELS) {
+        try {
+          // Skip if already sent today on this channel
+          const alreadySent = await hasReminderBeenSentToday(policy.id, channel);
+          if (alreadySent) {
+            result.skipped++;
+            continue;
+          }
 
-        if (!client) {
-          result.errors.push(`Policy ${policy.id}: No client data`);
-          continue;
+          // Create reminder record
+          const reminderId = await createReminderRecord({
+            broker_id: policy.broker_id,
+            client_id: policy.clients?.id ?? "",
+            policy_id: policy.id,
+            channel,
+            scheduled_for: new Date().toISOString(),
+          });
+
+          if (!reminderId) {
+            result.errors.push(
+              `Policy ${policy.id} (${channel}): failed to create reminder record`
+            );
+            continue;
+          }
+
+          result.remindersCreated++;
+
+          // Send
+          const sendError = await sendChannelReminder(policy, channel);
+          if (sendError) {
+            await updateReminderStatus(reminderId, "failed");
+            result.errors.push(`Policy ${policy.id} (${channel}): ${sendError}`);
+          } else {
+            await updateReminderStatus(reminderId, "sent");
+            if (channel === "email") result.emailsSent++;
+            else if (channel === "sms") result.smsSent++;
+            else if (channel === "whatsapp") result.whatsappSent++;
+          }
+        } catch (err) {
+          result.errors.push(
+            `Policy ${policy.id} (${channel}): ${err instanceof Error ? err.message : "Unknown error"}`
+          );
         }
-
-        // Skip if email already sent today
-        const alreadySent = await hasReminderBeenSentToday(policy.id, "email");
-        if (alreadySent) {
-          continue;
-        }
-
-        // Create reminder record
-        const reminderId = await createReminderRecord({
-          broker_id: policy.broker_id,
-          client_id: client.id,
-          policy_id: policy.id,
-          channel: "email",
-          scheduled_for: new Date().toISOString(),
-        });
-
-        if (!reminderId) {
-          result.errors.push(`Policy ${policy.id}: Failed to create reminder record`);
-          continue;
-        }
-
-        result.remindersCreated++;
-
-        // Send email
-        const emailError = await sendEmailReminder(policy);
-        if (emailError) {
-          await updateReminderStatus(reminderId, "failed", emailError);
-          result.errors.push(`Policy ${policy.id}: ${emailError}`);
-        } else {
-          await updateReminderStatus(reminderId, "sent");
-          result.emailsSent++;
-        }
-      } catch (err) {
-        result.errors.push(
-          `Policy ${policy.id}: ${err instanceof Error ? err.message : "Unknown error"}`
-        );
       }
     }
   } catch (err) {
@@ -237,7 +344,8 @@ export async function runSchedulerForWindow(
 }
 
 /**
- * Run the full reminder scheduler across all time windows (30, 14, 7, 1 days).
+ * Run the full reminder scheduler across all time windows (30, 14, 7, 1 days)
+ * and all channels.
  */
 export async function runFullScheduler(): Promise<{
   windows: Record<string, SchedulerRunResult>;
@@ -248,6 +356,9 @@ export async function runFullScheduler(): Promise<{
     totalPoliciesFound: 0,
     remindersCreated: 0,
     emailsSent: 0,
+    smsSent: 0,
+    whatsappSent: 0,
+    skipped: 0,
     errors: [],
   };
 
@@ -258,6 +369,9 @@ export async function runFullScheduler(): Promise<{
     total.totalPoliciesFound += windowResult.totalPoliciesFound;
     total.remindersCreated += windowResult.remindersCreated;
     total.emailsSent += windowResult.emailsSent;
+    total.smsSent += windowResult.smsSent;
+    total.whatsappSent += windowResult.whatsappSent;
+    total.skipped += windowResult.skipped;
     total.errors.push(...windowResult.errors);
   }
 

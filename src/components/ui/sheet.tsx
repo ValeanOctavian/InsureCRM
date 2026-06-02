@@ -3,7 +3,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils/cn";
 import { X } from "lucide-react";
-import { useEffect, useCallback } from "react";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 
 interface SheetContextValue {
   open: boolean;
@@ -32,7 +32,7 @@ interface SheetProps {
 }
 
 export function Sheet({ open, onOpenChange, children }: SheetProps) {
-  const onClose = useCallback(() => onOpenChange(false), [onOpenChange]);
+  const onClose = React.useCallback(() => onOpenChange(false), [onOpenChange]);
 
   return (
     <SheetContext.Provider value={{ open, onClose }}>
@@ -47,7 +47,10 @@ export function SheetTrigger({ children, asChild }: { children: React.ReactNode;
   const { onClose } = useSheet();
   // If asChild is true, clone the child element with onClick
   if (asChild && React.isValidElement(children)) {
-    return React.cloneElement(children, { onClick: onClose } as any);
+    return React.cloneElement(
+      children as React.ReactElement<{ onClick?: () => void }>,
+      { onClick: onClose }
+    );
   }
   return <>{children}</>;
 }
@@ -66,16 +69,10 @@ export function SheetContent({
   side = "right",
 }: SheetContentProps) {
   const { open, onClose } = useSheet();
-
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [open, onClose]);
+  const containerRef = useFocusTrap<HTMLDivElement>(open, {
+    lockScroll: true,
+    onEscape: onClose,
+  });
 
   if (!open) return null;
 
@@ -85,10 +82,15 @@ export function SheetContent({
       <div
         className="fixed inset-0 bg-black/40 transition-opacity"
         onClick={onClose}
+        aria-hidden="true"
       />
 
       {/* Panel */}
       <div
+        ref={containerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Details"
         className={cn(
           "fixed inset-y-0 flex w-full max-w-lg flex-col bg-white shadow-xl dark:bg-zinc-950",
           side === "right" && "right-0",
@@ -98,10 +100,12 @@ export function SheetContent({
       >
         <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Close panel"
             className="rounded-lg p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
           >
-            <X className="h-5 w-5" />
+            <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-4">{children}</div>

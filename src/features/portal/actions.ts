@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/auth/middleware";
-import { signOut as authSignOut } from "@/lib/auth/actions";
 import type { ActionResponse } from "@/types";
 import type { DocumentType, QualityStatus } from "@/types";
 
@@ -62,60 +61,6 @@ export async function updateContactDetails(
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to update contact details",
-    };
-  }
-}
-
-/**
- * Request renewal for a specific policy.
- */
-export async function requestRenewal(policyId: string): Promise<ActionResponse> {
-  const supabase = await createClient();
-  const user = await getCurrentUser();
-  if (!user?.email) {
-    return { success: false, error: "Not authenticated" };
-  }
-
-  try {
-    const client = await getClientWithBroker();
-    if (!client) {
-      return { success: false, error: "Client not found" };
-    }
-
-    // Check if there's already a pending request for this policy
-    const { data: existing } = await supabase
-      .from("renewal_requests")
-      .select("id")
-      .eq("policy_id", policyId)
-      .in("status", ["requested", "documents_needed", "in_progress"])
-      .maybeSingle();
-
-    if (existing) {
-      return {
-        success: false,
-        error: "A renewal request for this policy is already in progress.",
-      };
-    }
-
-    const { error } = await supabase.from("renewal_requests").insert({
-      client_id: client.id,
-      broker_id: client.broker_id,
-      policy_id: policyId,
-      status: "requested",
-      payment_status: "not_required",
-    });
-
-    if (error) {
-      return { success: false, error: error.message };
-    }
-
-    revalidatePath("/portal/renew");
-    revalidatePath("/portal");
-    return { success: true, data: undefined, message: "Renewal request submitted successfully." };
-  } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Failed to request renewal",
     };
   }
 }
@@ -197,11 +142,4 @@ export async function uploadPortalDocument(input: {
       error: err instanceof Error ? err.message : "Upload failed",
     };
   }
-}
-
-/**
- * Sign out the current user.
- */
-export async function signOut(): Promise<void> {
-  await authSignOut();
 }

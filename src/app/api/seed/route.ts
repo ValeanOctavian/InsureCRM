@@ -188,6 +188,12 @@ export async function POST() {
         first_name: c.first_name, last_name: c.last_name, cnp: c.cnp,
         email: c.email, phone: c.phone, address: c.address, city: c.city, county: c.county,
         status: "active",
+        // Link the demo client (Maria Ionescu) to her auth user so the
+        // portal can find her row via auth_user_id (and so the
+        // complete-profile action's UPDATE matches).
+        ...(c.email === "client@insurecrm.com" && mariaUserId
+          ? { auth_user_id: mariaUserId, profile_completed: true }
+          : {}),
       }, { onConflict: "id" });
     }
 

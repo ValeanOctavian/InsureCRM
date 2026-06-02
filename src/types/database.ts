@@ -31,6 +31,14 @@ export interface Client {
   county: string | null;
   status: ClientStatus;
   notes: string | null;
+  auth_user_id: string | null;
+  birth_date: string | null;
+  id_series: string | null;
+  id_number: string | null;
+  id_issued_by: string | null;
+  id_issued_date: string | null;
+  id_expiry_date: string | null;
+  profile_completed: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -145,6 +153,12 @@ export type RenewalRequestStatus =
   | "documents_needed"
   | "in_progress"
   | "issued"
+  | "renewal_requested"
+  | "waiting_for_documents"
+  | "waiting_for_offer"
+  | "offer_available"
+  | "waiting_for_payment"
+  | "renewed"
   | "cancelled";
 
 export type PaymentStatus = "unpaid" | "paid" | "not_required";
@@ -153,9 +167,40 @@ export interface RenewalRequest {
   id: string;
   client_id: string;
   broker_id: string;
-  policy_id: string;
+  policy_id: string | null;
   status: RenewalRequestStatus;
   payment_status: PaymentStatus;
+  notes: string | null;
+  selected_offer_id: string | null;
+  confirmed_fields: Record<string, unknown> | null;
+  policy_type: string | null;
+  insurer_name: string | null;
+  is_new_policy: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export type RenewalOfferStatus = "pending" | "accepted" | "rejected" | "withdrawn";
+
+export interface RenewalOffer {
+  id: string;
+  renewal_request_id: string;
+  broker_id: string;
+  insurer_name: string;
+  coverage_type: string;
+  price: number;
+  currency: string;
+  notes: string | null;
+  status: RenewalOfferStatus;
+  responded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RenewalRequestDocument {
+  id: string;
+  renewal_request_id: string;
+  document_id: string;
+  required_type: DocumentType;
+  created_at: string;
 }

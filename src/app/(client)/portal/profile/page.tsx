@@ -1,5 +1,5 @@
 import { getPortalClient } from "@/features/portal/queries";
-import { PortalDashboardClient } from "../portal-dashboard-client";
+import { PortalContactDetailsForm } from "../portal-contact-details-form";
 import { MapPin, Phone, Mail, User, Shield } from "lucide-react";
 
 export default async function PortalProfilePage() {
@@ -59,13 +59,48 @@ export default async function PortalProfilePage() {
           </div>
         </div>
 
-        <PortalDashboardClient
+        <PortalContactDetailsForm
           clientId={client.id}
           currentPhone={client.phone}
           currentAddress={client.address}
           currentCity={client.city}
           currentCounty={client.county}
         />
+      </div>
+
+      {/* Romanian ID data */}
+      <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+        <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+          Identity card
+        </h2>
+        <dl className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <dt className="text-zinc-500">CNP</dt>
+            <dd className="font-mono text-zinc-900 dark:text-zinc-50">{client.cnp || "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-zinc-500">Date of birth</dt>
+            <dd className="text-zinc-900 dark:text-zinc-50">{client.birth_date || "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-zinc-500">Series / Number</dt>
+            <dd className="text-zinc-900 dark:text-zinc-50">
+              {client.id_series || "—"} {client.id_number || ""}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-zinc-500">Issued by</dt>
+            <dd className="text-zinc-900 dark:text-zinc-50">{client.id_issued_by || "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-zinc-500">Issued date</dt>
+            <dd className="text-zinc-900 dark:text-zinc-50">{client.id_issued_date || "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-zinc-500">Expiry date</dt>
+            <dd className="text-zinc-900 dark:text-zinc-50">{client.id_expiry_date || "—"}</dd>
+          </div>
+        </dl>
       </div>
 
       {/* Account Info */}
@@ -102,9 +137,7 @@ export default async function PortalProfilePage() {
               {broker.full_name?.split(" ").map((n) => n[0]).join("").toUpperCase() || "?"}
             </div>
             <div>
-              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                {broker.full_name}
-              </p>
+              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">{broker.full_name}</p>
               <p className="text-xs text-zinc-500">{broker.email}</p>
               {broker.phone && (
                 <p className="text-xs text-zinc-500">{broker.phone}</p>

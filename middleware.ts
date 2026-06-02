@@ -1,48 +1,64 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
-const publicPaths = ["/login", "/register", "/forgot-password"];
+const publicPaths = [
+  "/login",
+  "/register",
+  "/forgot-password",
+  "/portal/login",
+  "/portal/register",
+];
 
-const roleRouteMap: Record<string, string[]> = {
-  broker: ["/broker"],
-  client: ["/portal", "/client"],
-  admin: ["/admin"],
-};
+function resolveHomeForRole(role: string, request: NextRequest): URL {
+  if (role === "broker") return new URL("/broker/dashboard", request.url);
+  if (role === "client") return new URL("/portal", request.url);
+  return new URL("/admin", request.url);
+}
 
 export async function middleware(request: NextRequest) {
   const { supabaseResponse, user } = await updateSession(request);
   const pathname = request.nextUrl.pathname;
+  const role = user?.user_metadata?.role as string | undefined;
+
+  // Expose the pathname to server components (e.g. portal layout).
+  supabaseResponse.headers.set("x-pathname", pathname);
 
   // Allow public paths
   if (publicPaths.some((p) => pathname.startsWith(p))) {
-    // If user is already logged in, redirect to their appropriate dashboard
-    if (user) {
-      const role = user.user_metadata?.role as string | undefined;
-      if (role && roleRouteMap[role]) {
-        const redirectUrl = new URL(
-          role === "broker"
-            ? "/broker/dashboard"
-            : role === "client"
-              ? "/portal"
-              : "/admin",
-          request.url
-        );
-        return NextResponse.redirect(redirectUrl);
-      }
+    // If a logged-in client hits the broker login/register, send them to portal
+    if (user && role === "client" && (pathname === "/login" || pathname === "/register")) {
+      return NextResponse.redirect(new URL("/portal", request.url));
+    }
+    // If user is already logged in, redirect to their dashboard
+    if (user && role) {
+      return NextResponse.redirect(resolveHomeForRole(role, request));
+    }
+    return supabaseResponse;
+  }
+
+  // /portal/complete-profile is reachable but still requires auth
+  if (pathname === "/portal/complete-profile") {
+    if (!user) {
+      const loginUrl = new URL("/portal/login", request.url);
+      loginUrl.searchParams.set("redirect", pathname);
+      return NextResponse.redirect(loginUrl);
     }
     return supabaseResponse;
   }
 
   // Require authentication for all other routes
   if (!user) {
-    const loginUrl = new URL("/login", request.url);
+    // If the user is trying to access a portal route, send them to portal login
+    const loginPath =
+      pathname.startsWith("/portal") || pathname.startsWith("/client")
+        ? "/portal/login"
+        : "/login";
+    const loginUrl = new URL(loginPath, request.url);
     loginUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
   // Role-based route protection
-  const role = user.user_metadata?.role as string | undefined;
-
   // Broker routes — only broker or admin
   if (pathname.startsWith("/broker") && role !== "broker" && role !== "admin") {
     return NextResponse.redirect(new URL("/login", request.url));

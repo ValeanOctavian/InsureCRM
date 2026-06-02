@@ -2,44 +2,70 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase";
 import { getCurrentProfile } from "@/lib/auth/middleware";
 import { logActivity } from "@/features/activities/actions";
-import { EmailNotificationProvider } from "@/lib/notifications";
-import { renderRenewalReminderEmail } from "@/emails/renewal-reminder";
 import {
-  runFullScheduler,
+  EmailNotificationProvider,
+  SmsNotificationProvider,
+  WhatsAppNotificationProvider,
+} from "@/lib/notifications";
+import { renderRenewalReminderEmail } from "@/emails/renewal-reminder";
+import { renderRenewalReminderSms } from "@/emails/sms-reminder";
+import { renderRenewalReminderWhatsApp } from "@/emails/whatsapp-reminder";
+import {
   runSchedulerForWindow,
   hasReminderBeenSentToday,
   createReminderRecord,
   updateReminderStatus,
-  findPoliciesExpiringInDays,
 } from "./scheduler";
-import type { ActionResponse } from "@/types";
+import type { ActionResponse, ReminderChannel } from "@/types";
 import type { ReminderWindow, SchedulerRunResult } from "./scheduler";
 
+function buildPortalLink(): string {
+  return `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/portal`;
+}
+
 /**
- * Send a renewal reminder now for a specific policy.
- * Used by the "Send Reminder Now" button on the broker dashboard.
+ * Send a renewal reminder now for a specific policy, on the specified channel
+ * (or all 3 channels if `channel` is omitted).
+ *
+ * Channels are skipped silently if the client has no contact for that channel.
  */
 export async function sendReminderNow(
-  policyId: string
-): Promise<ActionResponse<{ reminderId: string }>> {
-  const profile = await getCurrentProfile();
+  policyId: string,
+  channel?: ReminderChannel,
+  options?: { asBrokerId?: string }
+): Promise<ActionResponse<{ sent: ReminderChannel[] }>> {
+  // When called from a cron route, the caller passes the broker id directly.
+  let profile: { id: string } | null = null;
+  if (options?.asBrokerId) {
+    profile = { id: options.asBrokerId };
+  } else {
+    const p = await getCurrentProfile();
+    profile = p ? { id: p.id } : null;
+  }
   if (!profile) {
     return { success: false, error: "Not authenticated" };
   }
 
   try {
-    const supabase = await createClient();
+    // In cron mode (asBrokerId set) use the admin client to bypass RLS;
+    // otherwise the user's session-bound client enforces broker ownership.
+    const supabase = options?.asBrokerId
+      ? createAdminClient()
+      : await createClient();
 
-    // Load policy with client and vehicle data
     const { data: policy } = await supabase
       .from("policies")
-      .select(`
+      .select(
+        `
         *,
         clients(id, first_name, last_name, email, phone),
-        vehicles(registration_number)
-      `)
+        vehicles(registration_number),
+        profiles!policies_broker_id_fkey ( id, full_name, email, phone )
+      `
+      )
       .eq("id", policyId)
       .eq("broker_id", profile.id)
       .single();
@@ -48,82 +74,163 @@ export async function sendReminderNow(
       return { success: false, error: "Policy not found" };
     }
 
-    const client = policy.clients;
-    if (!client?.email) {
-      return { success: false, error: "Client has no email address" };
+    const client = (Array.isArray(policy.clients) ? policy.clients[0] : policy.clients) as
+      | { id: string; first_name: string; last_name: string; email: string | null; phone: string | null }
+      | null;
+    const vehicle = (Array.isArray(policy.vehicles) ? policy.vehicles[0] : policy.vehicles) as
+      | { registration_number: string }
+      | null;
+    const broker = (Array.isArray(policy.profiles) ? policy.profiles[0] : policy.profiles) as
+      | { id: string; full_name: string; email: string; phone: string | null }
+      | null;
+
+    if (!client) {
+      return { success: false, error: "Client not found" };
     }
 
-    // Check if already sent today
-    const alreadySent = await hasReminderBeenSentToday(policyId, "email");
-    if (alreadySent) {
-      return { success: false, error: "Reminder was already sent today for this policy." };
-    }
-
-    // Create reminder record
-    const reminderId = await createReminderRecord({
-      broker_id: policy.broker_id,
-      client_id: client.id,
-      policy_id: policy.id,
-      channel: "email",
-      scheduled_for: new Date().toISOString(),
-    });
-
-    if (!reminderId) {
-      return { success: false, error: "Failed to create reminder record" };
-    }
-
-    // Build and send email
     const expirationDate = new Date(policy.end_date);
-    const daysRemaining = Math.ceil(
-      (expirationDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
+    const daysRemaining = Math.max(
+      0,
+      Math.ceil((expirationDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
     );
+    const renewalLink = buildPortalLink();
+    const clientName = `${client.first_name} ${client.last_name}`;
 
-    const renewalLink = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/portal/renew?policy=${policy.id}`;
+    const channels: ReminderChannel[] = channel ? [channel] : ["email", "sms", "whatsapp"];
+    const sent: ReminderChannel[] = [];
+    const errors: string[] = [];
+    const useAdmin = !!options?.asBrokerId;
 
-    const emailHtml = renderRenewalReminderEmail({
-      clientName: `${client.first_name} ${client.last_name}`,
-      policyType: policy.type,
-      policyNumber: policy.policy_number,
-      insurerName: policy.insurer_name,
-      vehicleRegistration: policy.vehicles?.registration_number,
-      expirationDate: policy.end_date,
-      daysRemaining: Math.max(0, daysRemaining),
-      renewalLink,
-      brokerName: profile.full_name,
-      brokerEmail: profile.email,
-      brokerPhone: profile.phone,
-    });
+    for (const ch of channels) {
+      // Dedupe: skip if already sent today on this channel
+      const alreadySent = await hasReminderBeenSentToday(policyId, ch, useAdmin);
+      if (alreadySent) continue;
 
-    const provider = new EmailNotificationProvider();
-    const sendResult = await provider.send({
-      to: client.email,
-      subject: `Renewal Reminder: Your ${policy.type} policy expires in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`,
-      body: emailHtml,
-    });
+      // Create reminder record
+      const reminderId = await createReminderRecord({
+        broker_id: policy.broker_id,
+        client_id: client.id,
+        policy_id: policyId,
+        channel: ch,
+        scheduled_for: new Date().toISOString(),
+      }, useAdmin);
 
-    if (!sendResult.success) {
-      await updateReminderStatus(reminderId, "failed", sendResult.error);
-      return { success: false, error: sendResult.error ?? "Failed to send email" };
+      if (!reminderId) {
+        errors.push(`${ch}: failed to create reminder record`);
+        continue;
+      }
+
+      let error: string | null = null;
+
+      switch (ch) {
+        case "email": {
+          if (!client.email) {
+            error = "client has no email";
+            break;
+          }
+          const html = renderRenewalReminderEmail({
+            clientName,
+            policyType: policy.type,
+            policyNumber: policy.policy_number,
+            insurerName: policy.insurer_name,
+            vehicleRegistration: vehicle?.registration_number ?? null,
+            expirationDate: policy.end_date,
+            daysRemaining,
+            renewalLink,
+            brokerName: broker?.full_name,
+            brokerEmail: broker?.email,
+            brokerPhone: broker?.phone,
+          });
+          const result = await new EmailNotificationProvider().send({
+            to: client.email,
+            subject: `Renewal Reminder: Your ${policy.type} policy expires in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`,
+            body: html,
+          });
+          error = result.success ? null : result.error ?? "email send failed";
+          break;
+        }
+        case "sms": {
+          if (!client.phone) {
+            error = "client has no phone";
+            break;
+          }
+          const body = renderRenewalReminderSms({
+            clientName,
+            policyType: policy.type,
+            policyNumber: policy.policy_number,
+            insurerName: policy.insurer_name,
+            daysRemaining,
+            expirationDate: policy.end_date,
+            renewalLink,
+            brokerName: broker?.full_name,
+          });
+          const result = await new SmsNotificationProvider().send({ to: client.phone, body });
+          error = result.success ? null : result.error ?? "sms send failed";
+          break;
+        }
+        case "whatsapp": {
+          if (!client.phone) {
+            error = "client has no phone";
+            break;
+          }
+          const body = renderRenewalReminderWhatsApp({
+            clientName,
+            policyType: policy.type,
+            policyNumber: policy.policy_number,
+            insurerName: policy.insurer_name,
+            vehicleRegistration: vehicle?.registration_number ?? null,
+            expirationDate: policy.end_date,
+            daysRemaining,
+            renewalLink,
+            brokerName: broker?.full_name,
+            brokerPhone: broker?.phone,
+          });
+          const result = await new WhatsAppNotificationProvider().send({
+            to: client.phone,
+            body,
+          });
+          error = result.success ? null : result.error ?? "whatsapp send failed";
+          break;
+        }
+      }
+
+      if (error) {
+        await updateReminderStatus(reminderId, "failed", useAdmin);
+        errors.push(`${ch}: ${error}`);
+      } else {
+        await updateReminderStatus(reminderId, "sent", useAdmin);
+        sent.push(ch);
+
+        if (!useAdmin) {
+          logActivity({
+            entityType: "reminder",
+            entityId: reminderId,
+            action: "sent",
+            description: `Renewal reminder sent to ${clientName} via ${ch} for ${policy.type} policy`,
+            metadata: { policyId, channel: ch },
+          });
+        }
+      }
     }
-
-    await updateReminderStatus(reminderId, "sent");
-
-    // Log activity
-    logActivity({
-      entityType: "reminder",
-      entityId: reminderId,
-      action: "sent",
-      description: `Renewal reminder sent to ${client.first_name} ${client.last_name} for ${policy.type} policy`,
-      metadata: { policyId, channel: "email" },
-    });
 
     revalidatePath("/broker/dashboard");
     revalidatePath("/broker/policies");
+    revalidatePath("/broker/renewals");
+
+    if (sent.length === 0) {
+      return {
+        success: false,
+        error: errors.length > 0 ? errors.join("; ") : "No channels available for this client",
+      };
+    }
 
     return {
       success: true,
-      data: { reminderId },
-      message: `Reminder sent to ${client.first_name} ${client.last_name}`,
+      data: { sent },
+      message:
+        sent.length === 1
+          ? `Reminder sent via ${sent[0]}.`
+          : `Reminders sent via ${sent.join(", ")}.`,
     };
   } catch (err) {
     return {
@@ -135,7 +242,8 @@ export async function sendReminderNow(
 
 /**
  * Manually trigger the scheduler for a specific time window.
- * e.g., sendRemindersForWindow(30) sends reminders for policies expiring in 30 days.
+ * e.g., sendRemindersForWindow(30) sends reminders for policies expiring in 30 days
+ * on all 3 channels.
  */
 export async function sendRemindersForWindow(
   days: ReminderWindow
@@ -150,11 +258,12 @@ export async function sendRemindersForWindow(
 
     revalidatePath("/broker/dashboard");
     revalidatePath("/broker/policies");
+    revalidatePath("/broker/renewals");
 
     return {
       success: true,
       data: result,
-      message: `Processed ${result.totalPoliciesFound} policies, sent ${result.emailsSent} reminders.`,
+      message: `Processed ${result.totalPoliciesFound} policies — ${result.emailsSent} email, ${result.smsSent} SMS, ${result.whatsappSent} WhatsApp.`,
     };
   } catch (err) {
     return {

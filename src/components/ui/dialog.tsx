@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 
 interface DialogContextValue {
   open: boolean;
@@ -48,12 +49,18 @@ export function DialogTrigger({
   const { onOpenChange } = React.useContext(DialogContext);
 
   if (asChild && React.isValidElement(children)) {
-    return React.cloneElement(children as React.ReactElement<any>, {
-      onClick: (e: React.MouseEvent) => {
-        onClick?.();
-        onOpenChange(true);
-      },
-    });
+    return React.cloneElement(
+      children as React.ReactElement<{ onClick?: (e: React.MouseEvent) => void }>,
+      {
+        onClick: (e: React.MouseEvent) => {
+          onClick?.();
+          onOpenChange(true);
+          // Propagate the event to the original handler if present.
+          const original = (children as { props?: { onClick?: (e: React.MouseEvent) => void } }).props?.onClick;
+          original?.(e);
+        },
+      }
+    );
   }
 
   return (
@@ -73,6 +80,10 @@ export function DialogContent({
   showClose?: boolean;
 }) {
   const { open, onOpenChange } = React.useContext(DialogContext);
+  const containerRef = useFocusTrap<HTMLDivElement>(open, {
+    lockScroll: true,
+    onEscape: () => onOpenChange(false),
+  });
 
   if (!open) return null;
 
@@ -82,9 +93,13 @@ export function DialogContent({
       <div
         className="fixed inset-0 bg-black/50 backdrop-blur-sm"
         onClick={() => onOpenChange(false)}
+        aria-hidden="true"
       />
       {/* Panel */}
       <div
+        ref={containerRef}
+        role="dialog"
+        aria-modal="true"
         className={cn(
           "relative z-50 w-full max-w-lg rounded-xl border border-zinc-200 bg-white p-6 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950",
           className
@@ -92,7 +107,9 @@ export function DialogContent({
       >
         {showClose && (
           <button
+            type="button"
             onClick={() => onOpenChange(false)}
+            aria-label="Close dialog"
             className="absolute right-4 top-4 rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
           >
             <svg
@@ -105,6 +122,7 @@ export function DialogContent({
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
+              aria-hidden="true"
             >
               <path d="M18 6 6 18" />
               <path d="m6 6 12 12" />

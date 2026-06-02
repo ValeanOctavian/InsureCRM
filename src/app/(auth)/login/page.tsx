@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Shield, Sparkles } from "lucide-react";
+import { Shield } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 function LoginForm() {
@@ -32,7 +32,14 @@ function LoginForm() {
       setError(error.message);
       setLoading(false);
     } else {
-      router.push(redirectTo);
+      // Get the session to determine the role, then redirect appropriately.
+      const { data: userData } = await supabase.auth.getUser();
+      const role = userData?.user?.user_metadata?.role as string | undefined;
+      if (role === "client") {
+        router.push("/portal");
+      } else {
+        router.push(redirectTo);
+      }
       router.refresh();
     }
   }
@@ -46,6 +53,8 @@ function LoginForm() {
       setPassword("Demo123!");
     }
   };
+
+  // Note: client demo kept for completeness, but the canonical client login is /portal/login.
 
   return (
     <div>
@@ -61,27 +70,24 @@ function LoginForm() {
         </p>
       </div>
 
-      {/* Demo quick login buttons */}
+      {/* Demo quick login button */}
       <div className="mb-6 space-y-2">
         <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">
           Quick demo access
         </p>
-        <div className="flex gap-2">
-          <button
-            onClick={() => fillDemo("broker")}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-400 dark:hover:bg-blue-900"
-          >
-            <Shield className="h-3.5 w-3.5" />
-            Broker Demo
-          </button>
-          <button
-            onClick={() => fillDemo("client")}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-400 dark:hover:bg-emerald-900"
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            Client Demo
-          </button>
-        </div>
+        <button
+          onClick={() => fillDemo("broker")}
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-400 dark:hover:bg-blue-900"
+        >
+          <Shield className="h-3.5 w-3.5" />
+          Broker Demo
+        </button>
+        <p className="text-center text-[11px] text-zinc-400">
+          Clients sign in via{" "}
+          <Link href="/portal/login" className="underline">
+            /portal/login
+          </Link>
+        </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">

@@ -24,13 +24,31 @@ const variantStyles: Record<StatusVariant, string> = {
 export function StatusBadge({ status, variant, className }: StatusBadgeProps) {
   const resolvedVariant: StatusVariant =
     variant ??
-    (status === "active" || status === "done" || status === "clear" || status === "issued"
+    (status === "active" ||
+    status === "done" ||
+    status === "clear" ||
+    status === "issued" ||
+    status === "renewed" ||
+    status === "offer_available"
       ? "success"
-      : status === "expired" || status === "cancelled" || status === "failed" || status === "rejected"
+      : status === "expired" ||
+          status === "cancelled" ||
+          status === "failed" ||
+          status === "rejected" ||
+          status === "withdrawn"
         ? "danger"
-        : status === "pending" || status === "in_progress" || status === "blurry" || status === "expiring_soon" || status === "requested" || status === "documents_needed"
+        : status === "pending" ||
+            status === "in_progress" ||
+            status === "blurry" ||
+            status === "expiring_soon" ||
+            status === "requested" ||
+            status === "documents_needed" ||
+            status === "renewal_requested" ||
+            status === "waiting_for_documents" ||
+            status === "waiting_for_offer" ||
+            status === "waiting_for_payment"
           ? "warning"
-          : status === "sent" || status === "renewed" || status === "paid"
+          : status === "sent" || status === "paid" || status === "accepted"
             ? "info"
             : "neutral");
 

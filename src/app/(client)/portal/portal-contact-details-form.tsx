@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { updateContactDetails } from "@/features/portal/actions";
 import { Pencil, XCircle, CheckCircle2, Loader2 } from "lucide-react";
 
-interface PortalDashboardClientProps {
+interface PortalContactDetailsFormProps {
   currentPhone: string | null;
   currentAddress: string | null;
   currentCity: string | null;
@@ -16,12 +16,12 @@ interface PortalDashboardClientProps {
   clientId: string;
 }
 
-export function PortalDashboardClient({
+export function PortalContactDetailsForm({
   currentPhone,
   currentAddress,
   currentCity,
   currentCounty,
-}: PortalDashboardClientProps) {
+}: PortalContactDetailsFormProps) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(false);

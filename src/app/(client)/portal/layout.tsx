@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { getPortalClient } from "@/features/portal/queries";
 import { PortalNav } from "./portal-nav";
+import { ROUTES } from "@/lib/utils";
 
 export default async function PortalLayout({
   children,
@@ -10,7 +12,15 @@ export default async function PortalLayout({
   const portal = await getPortalClient();
 
   if (!portal) {
-    redirect("/login?redirect=/portal");
+    redirect(`${ROUTES.PORTAL_LOGIN}?redirect=/portal`);
+  }
+
+  // If the client has not completed the Romanian profile data, force them to the
+  // complete-profile page (unless they are already on it).
+  const hdrs = await headers();
+  const pathname = hdrs.get("x-pathname") || "";
+  if (!portal.client.profile_completed && pathname !== "/portal/complete-profile") {
+    redirect(ROUTES.PORTAL_COMPLETE_PROFILE);
   }
 
   return (
@@ -24,7 +34,7 @@ export default async function PortalLayout({
             </div>
             <div>
               <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                My Insurance Portal
+                My Portal
               </p>
               <p className="text-xs text-zinc-500 dark:text-zinc-400">
                 Welcome, {portal.client.first_name}

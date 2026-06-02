@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { checkImageQuality } from "@/lib/opencv";
 import type { QualityCheckResult, QualityCheckThresholds } from "@/lib/opencv";
 
@@ -26,15 +26,28 @@ const initialState: DocumentQualityState = {
  * Hook that manages the full document upload flow:
  * 1. User selects file
  * 2. Render preview
- * 3. Run OpenCV quality checks (blur, brightness, resolution)
+ * 3. Run OpenCV quality checks (blur, brightness, resolution) – automatic
  * 4. Show result → allow retake or proceed to upload
  * 5. Upload to Supabase Storage
  */
 export function useDocumentQualityCheck(thresholds?: QualityCheckThresholds) {
   const [state, setState] = useState<DocumentQualityState>(initialState);
 
+  // Mirror the latest file/previewUrl in refs so `runQualityCheck` can be
+  // triggered from `useEffect` (or by the still-exposed manual API) without
+  // hitting a stale closure over `state`.
+  const fileRef = useRef<File | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+  const lastAutoCheckedRef = useRef<File | null>(null);
+
   const selectFile = useCallback((file: File) => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+    }
     const previewUrl = URL.createObjectURL(file);
+    fileRef.current = file;
+    previewUrlRef.current = previewUrl;
+    lastAutoCheckedRef.current = null; // a new file means a fresh auto-run
     setState({
       step: "preview",
       file,
@@ -45,7 +58,9 @@ export function useDocumentQualityCheck(thresholds?: QualityCheckThresholds) {
   }, []);
 
   const runQualityCheck = useCallback(async () => {
-    if (!state.file || !state.previewUrl) return;
+    const file = fileRef.current;
+    const previewUrl = previewUrlRef.current;
+    if (!file || !previewUrl) return;
 
     setState((prev) => ({ ...prev, step: "checking", error: null }));
 
@@ -55,7 +70,7 @@ export function useDocumentQualityCheck(thresholds?: QualityCheckThresholds) {
       const imageLoadPromise = new Promise<HTMLImageElement>((resolve, reject) => {
         img.onload = () => resolve(img);
         img.onerror = () => reject(new Error("Failed to load image"));
-        img.src = state.previewUrl!;
+        img.src = previewUrl;
       });
 
       const loadedImg = await imageLoadPromise;
@@ -97,21 +112,38 @@ export function useDocumentQualityCheck(thresholds?: QualityCheckThresholds) {
         error: err instanceof Error ? err.message : "Failed to check image quality",
       }));
     }
-  }, [state.file, state.previewUrl, thresholds]);
+  }, [thresholds]);
+
+  // Auto-trigger the quality check as soon as a new image is selected.
+  // Guarded so we only fire once per file (idempotent if a re-render
+  // re-evaluates the effect) and skip non-image files (e.g. PDFs).
+  useEffect(() => {
+    if (!state.file) return;
+    if (!state.file.type.startsWith("image/")) return;
+    if (lastAutoCheckedRef.current === state.file) return;
+    lastAutoCheckedRef.current = state.file;
+    void runQualityCheck();
+  }, [state.file, runQualityCheck]);
 
   const reset = useCallback(() => {
-    if (state.previewUrl) {
-      URL.revokeObjectURL(state.previewUrl);
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
     }
+    fileRef.current = null;
+    previewUrlRef.current = null;
+    lastAutoCheckedRef.current = null;
     setState(initialState);
-  }, [state.previewUrl]);
+  }, []);
 
   const retake = useCallback(() => {
-    if (state.previewUrl) {
-      URL.revokeObjectURL(state.previewUrl);
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
     }
+    fileRef.current = null;
+    previewUrlRef.current = null;
+    lastAutoCheckedRef.current = null;
     setState(initialState);
-  }, [state.previewUrl]);
+  }, []);
 
   const setUploading = useCallback(() => {
     setState((prev) => ({ ...prev, step: "uploading" }));

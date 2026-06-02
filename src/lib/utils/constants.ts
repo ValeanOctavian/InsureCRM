@@ -83,6 +83,19 @@ export const RENEWAL_REQUEST_STATUS = {
   IN_PROGRESS: "in_progress",
   ISSUED: "issued",
   CANCELLED: "cancelled",
+  RENEWAL_REQUESTED: "renewal_requested",
+  WAITING_FOR_DOCUMENTS: "waiting_for_documents",
+  WAITING_FOR_OFFER: "waiting_for_offer",
+  OFFER_AVAILABLE: "offer_available",
+  WAITING_FOR_PAYMENT: "waiting_for_payment",
+  RENEWED: "renewed",
+} as const;
+
+export const RENEWAL_OFFER_STATUS = {
+  PENDING: "pending",
+  ACCEPTED: "accepted",
+  REJECTED: "rejected",
+  WITHDRAWN: "withdrawn",
 } as const;
 
 export const PAYMENT_STATUS = {
@@ -99,6 +112,9 @@ export const APP_DESCRIPTION = "Insurance Broker CRM";
 export const ROUTES = {
   LOGIN: "/login",
   REGISTER: "/register",
+  PORTAL_LOGIN: "/portal/login",
+  PORTAL_REGISTER: "/portal/register",
+  PORTAL_COMPLETE_PROFILE: "/portal/complete-profile",
   BROKER: {
     DASHBOARD: "/broker/dashboard",
     CLIENTS: "/broker/clients",
@@ -110,10 +126,10 @@ export const ROUTES = {
     ANALYTICS: "/broker/analytics",
   },
   CLIENT: {
-    PORTAL: "/client/portal",
-    POLICIES: "/client/portal/policies",
-    DOCUMENTS: "/client/portal/documents",
-    RENEW: "/client/portal/renew",
-    PROFILE: "/client/portal/profile",
+    PORTAL: "/portal",
+    DOCUMENTS: "/portal/documents",
+    PROFILE: "/portal/profile",
+    POLICY_REQUEST: "/portal/policy-request",
+    COMPLETE_PROFILE: "/portal/complete-profile",
   },
 } as const;

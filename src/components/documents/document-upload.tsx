@@ -315,13 +315,15 @@ export function DocumentUpload({ clients, vehicles }: DocumentUploadProps) {
             />
           )}
 
-          {/* Quality Check Actions */}
+          {/* Quality Check Actions – the check now runs automatically, so
+              we only show a brief "preparing" hint while React schedules
+              the OpenCV pass. */}
           {quality.step === "preview" && quality.file?.type.startsWith("image/") && (
             <div className="flex justify-center">
-              <Button onClick={quality.runQualityCheck} size="lg">
-                <Camera className="mr-2 h-4 w-4" />
-                Check Image Quality
-              </Button>
+              <div className="flex items-center gap-2 text-sm text-zinc-500">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Preparing quality check…
+              </div>
             </div>
           )}
 

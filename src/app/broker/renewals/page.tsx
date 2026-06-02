@@ -1,22 +1,39 @@
 import { requireAuth } from "@/lib/auth/middleware";
 import { PageHeader } from "@/components/shared/page-header";
+import { getBrokerRenewals, RENEWAL_STATUS_FILTERS } from "@/features/renewals";
+import { RenewalsList } from "./renewals-list";
+import type { RenewalRequestStatus } from "@/types";
 
-export default async function RenewalsPage() {
+interface PageProps {
+  searchParams: Promise<{ status?: string; q?: string }>;
+}
+
+export default async function BrokerRenewalsPage({ searchParams }: PageProps) {
   await requireAuth();
+  const params = await searchParams;
+
+  const status =
+    params.status && params.status !== "all"
+      ? (params.status as RenewalRequestStatus)
+      : undefined;
+  const search = params.q || undefined;
+
+  const renewals = await getBrokerRenewals({ status, search });
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       <PageHeader
         title="Renewals"
-        description="Track policy renewals and send reminders"
+        description="Manage client renewal requests and send offers"
       />
 
       <div className="mt-6">
-        <div className="rounded-xl border border-zinc-200 bg-white p-8 text-center dark:border-zinc-800 dark:bg-zinc-950">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Renewal reminders will be implemented in Module 9.
-          </p>
-        </div>
+        <RenewalsList
+          renewals={renewals}
+          filters={RENEWAL_STATUS_FILTERS}
+          currentStatus={params.status ?? "all"}
+          currentSearch={params.q ?? ""}
+        />
       </div>
     </div>
   );

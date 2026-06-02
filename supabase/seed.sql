@@ -20,13 +20,15 @@ INSERT INTO profiles (id, user_id, full_name, email, phone, role, broker_id) VAL
 
 -- ─── 3. Clients (6 realistic clients) ───
 
-INSERT INTO clients (id, broker_id, first_name, last_name, cnp, email, phone, address, city, county, status) VALUES
-  ('c0000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Maria', 'Ionescu', '2890112345678', 'client@insurecrm.com', '+40 722 987 654', 'Str. Mihai Viteazu 12', 'București', 'Ilfov', 'active'),
-  ('c0000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Ion', 'Popescu', '1850612345679', 'ion.popescu@email.ro', '+40 723 456 789', 'Str. Libertății 45', 'Cluj-Napoca', 'Cluj', 'active'),
-  ('c0000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'Elena', 'Dumitru', '2900312345680', 'elena.dumitru@email.ro', '+40 724 567 890', 'Bd. Unirii 78', 'Iași', 'Iași', 'active'),
-  ('c0000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', 'Alexandru', 'Stan', '1870812345681', 'alex.stan@email.ro', '+40 725 678 901', 'Str. Primăverii 23', 'Timișoara', 'Timiș', 'active'),
-  ('c0000000-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', 'Cristina', 'Mihai', '2920512345682', 'cristina.mihai@email.ro', '+40 726 789 012', 'Aleea Constructorilor 5', 'Brașov', 'Brașov', 'active'),
-  ('c0000000-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000001', 'Doru', 'Gheorghiu', '1830312345683', 'doru.gheorghiu@email.ro', '+40 727 890 123', 'Str. Republicii 34', 'Constanța', 'Constanța', 'active');
+INSERT INTO clients (id, broker_id, first_name, last_name, cnp, email, phone, address, city, county, status, auth_user_id, profile_completed) VALUES
+  -- Maria Ionescu: linked to her auth user + profile already complete
+  ('c0000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Maria', 'Ionescu', '2890112345678', 'client@insurecrm.com', '+40 722 987 654', 'Str. Mihai Viteazu 12', 'București', 'Ilfov', 'active', 'auth-user-client-1', true),
+  -- The other 5 demo clients: data-only records, no auth user
+  ('c0000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Ion', 'Popescu', '1850612345679', 'ion.popescu@email.ro', '+40 723 456 789', 'Str. Libertății 45', 'Cluj-Napoca', 'Cluj', 'active', NULL, false),
+  ('c0000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'Elena', 'Dumitru', '2900312345680', 'elena.dumitru@email.ro', '+40 724 567 890', 'Bd. Unirii 78', 'Iași', 'Iași', 'active', NULL, false),
+  ('c0000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', 'Alexandru', 'Stan', '1870812345681', 'alex.stan@email.ro', '+40 725 678 901', 'Str. Primăverii 23', 'Timișoara', 'Timiș', 'active', NULL, false),
+  ('c0000000-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', 'Cristina', 'Mihai', '2920512345682', 'cristina.mihai@email.ro', '+40 726 789 012', 'Aleea Constructorilor 5', 'Brașov', 'Brașov', 'active', NULL, false),
+  ('c0000000-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000001', 'Doru', 'Gheorghiu', '1830312345683', 'doru.gheorghiu@email.ro', '+40 727 890 123', 'Str. Republicii 34', 'Constanța', 'Constanța', 'active', NULL, false);
 
 -- ─── 4. Vehicles ───
 
