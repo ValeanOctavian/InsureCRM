@@ -21,7 +21,20 @@ export default async function PolicyRequestPage({ searchParams }: PageProps) {
     policy_number: string;
     type: import("@/types").PolicyType;
     end_date: string;
-    vehicle: { registration_number: string; brand: string; model: string } | null;
+    vehicle: {
+      registration_number: string;
+      brand: string;
+      model: string;
+      vin?: string | null;
+      year?: number | null;
+      engine_capacity?: number | null;
+      fuel_type?: string | null;
+      type?: string | null;
+      max_weight?: number | null;
+      power_kw?: number | null;
+      seats_number?: number | null;
+      civ_series?: string | null;
+    } | null;
   } | null = null;
 
   if (policyId) {
@@ -38,6 +51,15 @@ export default async function PolicyRequestPage({ searchParams }: PageProps) {
               registration_number: detail.vehicle.registration_number,
               brand: detail.vehicle.brand,
               model: detail.vehicle.model,
+              vin: detail.vehicle.vin,
+              year: detail.vehicle.year,
+              engine_capacity: detail.vehicle.engine_capacity,
+              fuel_type: detail.vehicle.fuel_type,
+              type: detail.vehicle.type,
+              max_weight: detail.vehicle.max_weight,
+              power_kw: detail.vehicle.power_kw,
+              seats_number: detail.vehicle.seats_number,
+              civ_series: detail.vehicle.civ_series,
             }
           : null,
       };

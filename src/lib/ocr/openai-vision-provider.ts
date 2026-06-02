@@ -137,9 +137,9 @@ export class OpenAiVisionProvider implements OcrProvider {
       identity_card:
         "Extract from a Romanian identity card (Carte de Identitate): first_name, last_name, cnp (13 digits), address, series (2 letters), number (6 digits), expiration_date (YYYY-MM-DD). Return as JSON with fields object.",
       car_registration:
-        "Extract from a Romanian vehicle registration certificate: registration_number (e.g., 'B 123 ABC'), vin (17 characters), brand, model, year (number), engine_capacity (cc, number), fuel_type, owner_name. Return as JSON with fields object.",
+        "Extract from a Romanian vehicle registration certificate: registration_number (e.g., 'B 123 ABC'), vin (17 characters), vehicle_type, brand, model, year (number), fuel_type, max_weight (number), engine_capacity (cc, number), power_kw (number), seats (number), civ_series, owner_name. Return as JSON with fields object.",
       car_identity_book:
-        "Extract from a Romanian vehicle identity book (Cartea de Identitate a Vehiculului): registration_number, vin, brand, model, year, engine_capacity, fuel_type, owner_name. Return as JSON with fields object.",
+        "Extract from a Romanian vehicle identity book (Cartea de Identitate a Vehiculului): registration_number, vin, vehicle_type, brand, model, year, fuel_type, max_weight, engine_capacity, power_kw, seats, civ_series, owner_name. Return as JSON with fields object.",
       address_certificate:
         "Extract text from an address certificate document. Return as JSON with text field and key_values object for any identified fields.",
       policy:

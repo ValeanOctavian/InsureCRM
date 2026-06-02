@@ -74,6 +74,7 @@ export async function uploadPortalDocument(input: {
   fileName: string;
   fileBase64: string;
   mimeType: string;
+  qualityStatus?: QualityStatus;
 }): Promise<ActionResponse<{ id: string }>> {
   const supabase = await createClient();
   const user = await getCurrentUser();
@@ -123,7 +124,7 @@ export async function uploadPortalDocument(input: {
         broker_id: client.broker_id,
         type: input.type,
         file_url: fileUrl,
-        quality_status: "pending",
+        quality_status: input.qualityStatus ?? "pending",
         ocr_status: "pending",
       })
       .select("id")

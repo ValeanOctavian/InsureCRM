@@ -23,6 +23,11 @@ export interface CarRegistrationFields {
   engine_capacity: number;
   fuel_type: string;
   owner_name: string;
+  vehicle_type?: string;
+  max_weight?: number;
+  power_kw?: number;
+  seats?: number;
+  civ_series?: string;
 }
 
 // ─── Policy Fields ───
@@ -100,11 +105,16 @@ export function getFieldsForDocumentType(type: DocumentType): FieldDefinition[] 
       return [
         { name: "registration_number", label: "Registration Number", type: "text", required: true, targetTable: "vehicles", targetColumn: "registration_number" },
         { name: "vin", label: "VIN", type: "text", required: false, targetTable: "vehicles", targetColumn: "vin" },
+        { name: "vehicle_type", label: "Vehicle Type", type: "text", required: false, targetTable: "vehicles", targetColumn: "type" },
         { name: "brand", label: "Brand", type: "text", required: true, targetTable: "vehicles", targetColumn: "brand" },
         { name: "model", label: "Model", type: "text", required: true, targetTable: "vehicles", targetColumn: "model" },
         { name: "year", label: "Year", type: "number", required: true, targetTable: "vehicles", targetColumn: "year" },
-        { name: "engine_capacity", label: "Engine Capacity (cc)", type: "number", required: false, targetTable: "vehicles", targetColumn: "engine_capacity" },
         { name: "fuel_type", label: "Fuel Type", type: "text", required: false, targetTable: "vehicles", targetColumn: "fuel_type" },
+        { name: "max_weight", label: "Max Weight (kg)", type: "number", required: false, targetTable: "vehicles", targetColumn: "max_weight" },
+        { name: "engine_capacity", label: "Engine Capacity (cc)", type: "number", required: false, targetTable: "vehicles", targetColumn: "engine_capacity" },
+        { name: "power_kw", label: "Power (KW)", type: "number", required: false, targetTable: "vehicles", targetColumn: "power_kw" },
+        { name: "seats", label: "Seats", type: "number", required: false, targetTable: "vehicles", targetColumn: "seats_number" },
+        { name: "civ_series", label: "CIV Series", type: "text", required: false, targetTable: "vehicles", targetColumn: "civ_series" },
         { name: "owner_name", label: "Owner Name", type: "text", required: true },
       ];
     case "policy":

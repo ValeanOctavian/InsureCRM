@@ -117,6 +117,11 @@ export class MockOcrProvider implements OcrProvider {
             engine_capacity: pickRandom([1598, 1997, 2498, 2993, 1499, 1995]),
             fuel_type: pickRandom(MOCK_FUEL_TYPES),
             owner_name: `${person.first} ${person.last}`,
+            vehicle_type: pickRandom(["Autoturism", "Autoutilitara", "Motocicleta"]),
+            max_weight: randomInt(1200, 3500),
+            power_kw: randomInt(50, 300),
+            seats: pickRandom([2, 5, 7]),
+            civ_series: `CIV${randomInt(100000, 999999)}`,
           },
           rawText: `CERTIFICAT DE ÎNMATRICULARE\nNr. înmatriculare: B 123 ABC\nMarca: ${brand}\nModel: ${model}\nAn: ${randomInt(2018, 2025)}`,
           fieldConfidence: {

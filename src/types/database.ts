@@ -57,6 +57,11 @@ export interface Vehicle {
   engine_capacity: number | null;
   fuel_type: string | null;
   document_number: string | null;
+  type?: string;
+  max_weight?: number;
+  power_kw?: number;
+  seats_number?: number;
+  civ_series?: string;
   created_at: string;
   updated_at: string;
 }

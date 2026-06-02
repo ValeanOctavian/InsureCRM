@@ -9,7 +9,7 @@ export interface OcrResult {
 }
 
 export interface OcrServiceOptions {
-  provider: "tesseract" | "google-vision" | "gpt-vision" | "custom";
+  provider: "mock" | "google-vision" | "gpt-vision" | "custom";
   language?: string;
 }
 
